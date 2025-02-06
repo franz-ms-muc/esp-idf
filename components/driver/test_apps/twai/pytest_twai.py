@@ -1,19 +1,22 @@
-# SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
+# SPDX-FileCopyrightText: 2021-2023 Espressif Systems (Shanghai) CO LTD
 # SPDX-License-Identifier: CC0-1.0
-
 import logging
+import subprocess
 from time import sleep
 
 import pytest
-from can import Bus, Message
+from can import Bus
+from can import Message
 from pytest_embedded import Dut
 
 
 @pytest.mark.esp32
 @pytest.mark.esp32c3
 @pytest.mark.esp32c6
+@pytest.mark.esp32h2
 @pytest.mark.esp32s2
 @pytest.mark.esp32s3
+@pytest.mark.esp32p4
 @pytest.mark.generic
 @pytest.mark.parametrize(
     'config',
@@ -23,25 +26,29 @@ from pytest_embedded import Dut
     indirect=True,
 )
 def test_twai_self(dut: Dut) -> None:
-    dut.expect_exact('Press ENTER to see the list of tests')
-    dut.write('[twai-loop-back]')
-    dut.expect_unity_test_output()
+    dut.run_all_single_board_cases(group='twai-loop-back')
 
 
 @pytest.fixture(name='socket_can', scope='module')
 def fixture_create_socket_can() -> Bus:
-    # See README.md for instructions on how to set up the socket CAN with the bitrate
+    # Set up the socket CAN with the bitrate
+    start_command = 'sudo ip link set can0 up type can bitrate 250000 restart-ms 100'
+    stop_command = 'sudo ip link set can0 down'
+    subprocess.run(start_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     bus = Bus(interface='socketcan', channel='can0', bitrate=250000)
-    yield bus
+    yield bus   # test invoked here
     bus.shutdown()
+    subprocess.run(stop_command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
 @pytest.mark.esp32
 @pytest.mark.esp32c3
 @pytest.mark.esp32c6
+@pytest.mark.esp32h2
 @pytest.mark.esp32s2
 @pytest.mark.esp32s3
-@pytest.mark.skip(reason='Runner not set up yet')
+@pytest.mark.esp32p4
+@pytest.mark.twai_std
 @pytest.mark.parametrize(
     'config',
     [
@@ -50,6 +57,7 @@ def fixture_create_socket_can() -> Bus:
     indirect=True,
 )
 def test_twai_listen_only(dut: Dut, socket_can: Bus) -> None:
+    dut.serial.hard_reset()
     dut.expect_exact('Press ENTER to see the list of tests')
 
     # TEST_CASE("twai_listen_only", "[twai]")
@@ -70,9 +78,11 @@ def test_twai_listen_only(dut: Dut, socket_can: Bus) -> None:
 @pytest.mark.esp32
 @pytest.mark.esp32c3
 @pytest.mark.esp32c6
+@pytest.mark.esp32h2
 @pytest.mark.esp32s2
 @pytest.mark.esp32s3
-@pytest.mark.skip(reason='Runner not set up yet')
+@pytest.mark.esp32p4
+@pytest.mark.twai_std
 @pytest.mark.parametrize(
     'config',
     [
@@ -81,6 +91,7 @@ def test_twai_listen_only(dut: Dut, socket_can: Bus) -> None:
     indirect=True,
 )
 def test_twai_remote_request(dut: Dut, socket_can: Bus) -> None:
+    dut.serial.hard_reset()
     dut.expect_exact('Press ENTER to see the list of tests')
 
     # TEST_CASE("twai_remote_request", "[twai]")
@@ -100,5 +111,6 @@ def test_twai_remote_request(dut: Dut, socket_can: Bus) -> None:
         data=[0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
     )
     socket_can.send(reply, timeout=0.2)
+    print('send', reply)
 
     dut.expect_unity_test_output()

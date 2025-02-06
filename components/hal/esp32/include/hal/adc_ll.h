@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2021-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -25,13 +25,31 @@ extern "C" {
 #define ADC_LL_EVENT_ADC1_ONESHOT_DONE    (1 << 0)
 #define ADC_LL_EVENT_ADC2_ONESHOT_DONE    (1 << 1)
 
+/*---------------------------------------------------------------
+                    Oneshot
+---------------------------------------------------------------*/
+#define ADC_LL_DATA_INVERT_DEFAULT(PERIPH_NUM)         (1)
+#define ADC_LL_SAR_CLK_DIV_DEFAULT(PERIPH_NUM)         (1)
+#define ADC_LL_DELAY_CYCLE_AFTER_DONE_SIGNAL           (0)
+
+/*---------------------------------------------------------------
+                    DMA
+---------------------------------------------------------------*/
+#define ADC_LL_DIGI_DATA_INVERT_DEFAULT(PERIPH_NUM)    (1)
+#define ADC_LL_FSM_RSTB_WAIT_DEFAULT                   (8)
+#define ADC_LL_FSM_START_WAIT_DEFAULT                  (ADC_LL_DIGI_SAR_CLK_DIV_DEFAULT)
+#define ADC_LL_FSM_STANDBY_WAIT_DEFAULT                (100)
+#define ADC_LL_SAMPLE_CYCLE_DEFAULT                    (2)
+#define ADC_LL_DIGI_SAR_CLK_DIV_DEFAULT                (16)
+
 //On esp32, ADC can only be continuously triggered when `ADC_LL_DEFAULT_CONV_LIMIT_EN == 1`, `ADC_LL_DEFAULT_CONV_LIMIT_NUM != 0`
 #define ADC_LL_DEFAULT_CONV_LIMIT_EN      1
 #define ADC_LL_DEFAULT_CONV_LIMIT_NUM     10
 
-typedef enum {
-    ADC_RTC_DATA_OK = 0,
-} adc_ll_rtc_raw_data_t;
+/*---------------------------------------------------------------
+                    PWDET (Power Detect)
+---------------------------------------------------------------*/
+#define ADC_LL_PWDET_CCT_DEFAULT                       (4)
 
 typedef enum {
     ADC_LL_CTRL_RTC   = 0,    ///< For ADC1 and ADC2. Select RTC controller.
@@ -211,7 +229,7 @@ static inline void adc_ll_digi_set_pattern_table_len(adc_unit_t adc_n, uint32_t 
 }
 
 /**
- * Set pattern table lenth for digital controller.
+ * Set pattern table length for digital controller.
  * The pattern table that defines the conversion rules for each SAR ADC. Each table has 16 items, in which channel selection,
  * resolution and attenuation are stored. When the conversion is started, the controller reads conversion rules from the
  * pattern table one by one. For each controller the scan sequence has at most 16 different rules before repeating itself.
@@ -546,6 +564,25 @@ static inline void adc_oneshot_ll_disable_all_unit(void)
 /*---------------------------------------------------------------
                     Common setting
 ---------------------------------------------------------------*/
+
+/**
+ * @brief Enable the ADC clock
+ * @param enable true to enable, false to disable
+ */
+static inline void adc_ll_enable_bus_clock(bool enable)
+{
+    (void)enable;
+    //For compatibility
+}
+
+/**
+ * @brief Reset ADC module
+ */
+static inline void adc_ll_reset_register(void)
+{
+    //For compatibility
+}
+
 /**
  * Set ADC module controller.
  * There are five SAR ADC controllers:

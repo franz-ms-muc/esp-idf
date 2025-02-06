@@ -27,6 +27,7 @@ typedef struct adc_oneshot_unit_ctx_t *adc_oneshot_unit_handle_t;
  */
 typedef struct {
     adc_unit_t unit_id;             ///< ADC unit
+    adc_oneshot_clk_src_t clk_src;  ///< Clock source
     adc_ulp_mode_t ulp_mode;        ///< ADC controlled by ULP, see `adc_ulp_mode_t`
 } adc_oneshot_unit_init_cfg_t;
 
@@ -51,6 +52,7 @@ typedef struct {
  *        - ESP_ERR_INVALID_ARG: Invalid arguments
  *        - ESP_ERR_NO_MEM:      No memory
  *        - ESP_ERR_NOT_FOUND:   The ADC peripheral to be claimed is already in use
+ *        - ESP_FAIL:            Clock source isn't initialised correctly
  */
 esp_err_t adc_oneshot_new_unit(const adc_oneshot_unit_init_cfg_t *init_config, adc_oneshot_unit_handle_t *ret_unit);
 
@@ -112,7 +114,7 @@ esp_err_t adc_oneshot_del_unit(adc_oneshot_unit_handle_t handle);
  *        - ESP_ERR_INVALID_ARG: Invalid argument
  *        - ESP_ERR_NOT_FOUND:   The IO is not a valid ADC pad
  */
-esp_err_t adc_oneshot_io_to_channel(int io_num, adc_unit_t *unit_id, adc_channel_t *channel);
+esp_err_t adc_oneshot_io_to_channel(int io_num, adc_unit_t * const unit_id, adc_channel_t * const channel);
 
 /**
  * @brief Get GPIO number from the given ADC channel
@@ -125,7 +127,7 @@ esp_err_t adc_oneshot_io_to_channel(int io_num, adc_unit_t *unit_id, adc_channel
  *       - ESP_OK:              On success
  *       - ESP_ERR_INVALID_ARG: Invalid argument
  */
-esp_err_t adc_oneshot_channel_to_io(adc_unit_t unit_id, adc_channel_t channel, int *io_num);
+esp_err_t adc_oneshot_channel_to_io(adc_unit_t unit_id, adc_channel_t channel, int * const io_num);
 
 /**
  * @brief Convenience function to get ADC calibrated result

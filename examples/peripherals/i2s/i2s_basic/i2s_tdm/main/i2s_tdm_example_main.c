@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2021-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Unlicense OR CC0-1.0
  */
@@ -12,21 +12,22 @@
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "sdkconfig.h"
+#include "i2s_example_pins.h"
 
 /* Set 1 to allocate rx & tx channels in duplex mode on a same I2S controller, they will share the BCLK and WS signal
  * Set 0 to allocate rx & tx channels in simplex mode, these two channels will be totally separated */
 #define EXAMPLE_I2S_DUPLEX_MODE     1
 
-#define EXAMPLE_TDM_BCLK_IO1        GPIO_NUM_2      // I2S bit clock io number
-#define EXAMPLE_TDM_WS_IO1          GPIO_NUM_3      // I2S word select io number
-#define EXAMPLE_TDM_DOUT_IO1        GPIO_NUM_4      // I2S data out io number
-#define EXAMPLE_TDM_DIN_IO1         GPIO_NUM_5      // I2S data in io number
+#define EXAMPLE_TDM_BCLK_IO1        EXAMPLE_I2S_BCLK_IO1    // I2S bit clock io number
+#define EXAMPLE_TDM_WS_IO1          EXAMPLE_I2S_WS_IO1      // I2S word select io number
+#define EXAMPLE_TDM_DOUT_IO1        EXAMPLE_I2S_DOUT_IO1    // I2S data out io number
+#define EXAMPLE_TDM_DIN_IO1         EXAMPLE_I2S_DIN_IO1     // I2S data in io number
 #if !EXAMPLE_I2S_DUPLEX_MODE
-    #define EXAMPLE_TDM_BCLK_IO2    GPIO_NUM_6      // I2S bit clock io number
-    #define EXAMPLE_TDM_WS_IO2      GPIO_NUM_7      // I2S word select io number
-    #define EXAMPLE_TDM_DOUT_IO2    GPIO_NUM_8      // I2S data out io number
-    #define EXAMPLE_TDM_DIN_IO2     GPIO_NUM_9      // I2S data in io number
-#endif
+#define EXAMPLE_TDM_BCLK_IO2        EXAMPLE_I2S_BCLK_IO2    // I2S bit clock io number
+#define EXAMPLE_TDM_WS_IO2          EXAMPLE_I2S_WS_IO2      // I2S word select io number
+#define EXAMPLE_TDM_DOUT_IO2        EXAMPLE_I2S_DOUT_IO2    // I2S data out io number
+#define EXAMPLE_TDM_DIN_IO2         EXAMPLE_I2S_DIN_IO2     // I2S data in io number
+#endif  // !EXAMPLE_I2S_DUPLEX_MODE
 
 #define EXAMPLE_BUFF_SIZE               2048
 
@@ -38,6 +39,10 @@ static void i2s_example_read_task(void *args)
     uint8_t *r_buf = (uint8_t *)calloc(1, EXAMPLE_BUFF_SIZE);
     assert(r_buf); // Check if r_buf allocation success
     size_t r_bytes = 0;
+
+    /* Enable the RX channel */
+    ESP_ERROR_CHECK(i2s_channel_enable(rx_chan));
+
     /* ATTENTION: The print and delay in the read task only for monitoring the data by human,
      * Normally there shouldn't be any delays to ensure a short polling time,
      * Otherwise the dma buffer will overflow and lead to the data lost */
@@ -73,7 +78,16 @@ static void i2s_example_write_task(void *args)
         w_buf[i + 7] = 0xF0;
     }
 
-    size_t w_bytes = 0;
+    size_t w_bytes = EXAMPLE_BUFF_SIZE;
+
+    /* (Optional) Preload the data before enabling the TX channel, so that the valid data can be transmitted immediately */
+    while (w_bytes == EXAMPLE_BUFF_SIZE) {
+        /* Here we load the target buffer repeatedly, until all the DMA buffers are preloaded */
+        ESP_ERROR_CHECK(i2s_channel_preload_data(tx_chan, w_buf, EXAMPLE_BUFF_SIZE, &w_bytes));
+    }
+
+    /* Enable the TX channel */
+    ESP_ERROR_CHECK(i2s_channel_enable(tx_chan));
     while (1) {
         /* Write i2s data */
         if (i2s_channel_write(tx_chan, w_buf, EXAMPLE_BUFF_SIZE, &w_bytes, 1000) == ESP_OK) {
@@ -203,11 +217,7 @@ void app_main(void)
     i2s_example_init_tdm_simplex();
 #endif
 
-    /* Step 3: Enable the tx and rx channels before writing or reading data */
-    ESP_ERROR_CHECK(i2s_channel_enable(tx_chan));
-    ESP_ERROR_CHECK(i2s_channel_enable(rx_chan));
-
-    /* Step 4: Create writing and reading task */
+    /* Step 3: Create writing and reading task, enable and start the channels */
     xTaskCreate(i2s_example_read_task, "i2s_example_read_task", 4096, NULL, 5, NULL);
     xTaskCreate(i2s_example_write_task, "i2s_example_write_task", 4096, NULL, 5, NULL);
 }

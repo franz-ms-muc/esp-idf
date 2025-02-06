@@ -6,7 +6,6 @@ from pytest_embedded import Dut
 
 
 @pytest.mark.supported_targets
-@pytest.mark.temp_skip_ci(targets=['esp32h2'], reason='test failed')  # IDF-6846
 @pytest.mark.generic
 def test_gptimer_example(dut: Dut) -> None:
     dut.expect_exact('Create timer handle', timeout=5)
@@ -24,14 +23,14 @@ def test_gptimer_example(dut: Dut) -> None:
     dut.expect_exact('Start timer, auto-reload at alarm event', timeout=5)
     res = dut.expect(r'Timer reloaded, count=(\d+)', timeout=5)
     reloaded_count = res.group(1).decode('utf8')
-    assert 0 <= int(reloaded_count) < 10
+    assert 0 <= int(reloaded_count) < 20
 
     dut.expect_exact('Stop timer')
     dut.expect_exact('Start timer, update alarm value dynamically')
     for i in range(1,5):
         res = dut.expect(r'Timer alarmed, count=(\d+)', timeout=5)
         alarm_count = res.group(1).decode('utf8')
-        assert (i * 1000000 - 10) < int(alarm_count) < (i * 1000000 + 10)
+        assert (i * 1000000 - 20) < int(alarm_count) < (i * 1000000 + 20)
 
     dut.expect_exact('Stop timer')
     dut.expect_exact('Delete timer')

@@ -1,18 +1,15 @@
-target_include_directories(${COMPONENT_LIB} PUBLIC .)
-target_include_directories(${COMPONENT_LIB} PUBLIC private_include)
+target_include_directories(${COMPONENT_LIB} PUBLIC . include)
 
 set(srcs
     "rtc_clk.c"
     "rtc_clk_init.c"
     "rtc_init.c"
-    "rtc_pm.c"
     "rtc_sleep.c"
     "rtc_time.c"
     "chip_info.c")
 
 if(NOT BOOTLOADER_BUILD)
     list(APPEND srcs "memprot.c"
-                     "esp_crypto_lock.c"
                      "sar_periph_ctrl.c")
 
     # init constructor for wifi

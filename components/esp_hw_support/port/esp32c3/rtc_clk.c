@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2020-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2020-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -10,12 +10,13 @@
 #include <assert.h>
 #include <stdlib.h>
 #include "sdkconfig.h"
-#include "esp32c3/rom/ets_sys.h"
 #include "esp32c3/rom/rtc.h"
 #include "soc/rtc.h"
+#include "soc/io_mux_reg.h"
+#include "esp_private/esp_sleep_internal.h"
+#include "esp_private/rtc_clk.h"
 #include "esp_hw_log.h"
 #include "esp_rom_sys.h"
-#include "hal/usb_serial_jtag_ll.h"
 #include "hal/clk_tree_ll.h"
 #include "hal/regi2c_ctrl_ll.h"
 
@@ -26,7 +27,18 @@ static int s_cur_pll_freq;
 
 static void rtc_clk_cpu_freq_to_xtal(int freq, int div);
 static void rtc_clk_cpu_freq_to_8m(void);
-static bool rtc_clk_set_bbpll_always_on(void);
+
+static uint32_t s_bbpll_digi_consumers_ref_count = 0; // Currently, it only tracks whether the 48MHz PHY clock is in-use by USB Serial/JTAG
+
+void rtc_clk_bbpll_add_consumer(void)
+{
+    s_bbpll_digi_consumers_ref_count += 1;
+}
+
+void rtc_clk_bbpll_remove_consumer(void)
+{
+    s_bbpll_digi_consumers_ref_count -= 1;
+}
 
 void rtc_clk_32k_enable(bool enable)
 {
@@ -39,6 +51,8 @@ void rtc_clk_32k_enable(bool enable)
 
 void rtc_clk_32k_enable_external(void)
 {
+    PIN_INPUT_ENABLE(IO_MUX_GPIO0_REG);
+    SET_PERI_REG_MASK(RTC_CNTL_PAD_HOLD_REG, RTC_CNTL_GPIO_PIN0_HOLD);
     clk_ll_xtal32k_enable(CLK_LL_XTAL32K_ENABLE_MODE_EXTERNAL);
 }
 
@@ -86,8 +100,17 @@ bool rtc_clk_8md256_enabled(void)
 
 void rtc_clk_slow_src_set(soc_rtc_slow_clk_src_t clk_src)
 {
-    clk_ll_rtc_slow_set_src(clk_src);
+#ifndef BOOTLOADER_BUILD
+    soc_rtc_slow_clk_src_t clk_src_before_switch = clk_ll_rtc_slow_get_src();
+    // Keep the RTC8M_CLK on in sleep if RTC clock is rc_fast_d256.
+    if (clk_src == SOC_RTC_SLOW_CLK_SRC_RC_FAST_D256 && clk_src_before_switch != SOC_RTC_SLOW_CLK_SRC_RC_FAST_D256) {       // Switch to RC_FAST_D256
+        esp_sleep_sub_mode_config(ESP_SLEEP_RTC_USE_RC_FAST_MODE, true);
+    } else if (clk_src != SOC_RTC_SLOW_CLK_SRC_RC_FAST_D256 && clk_src_before_switch == SOC_RTC_SLOW_CLK_SRC_RC_FAST_D256) { // Switch away from RC_FAST_D256
+        esp_sleep_sub_mode_config(ESP_SLEEP_RTC_USE_RC_FAST_MODE, false);
+    }
+#endif
 
+    clk_ll_rtc_slow_set_src(clk_src);
     /* Why we need to connect this clock to digital?
      * Or maybe this clock should be connected to digital when xtal 32k clock is enabled instead?
      */
@@ -96,7 +119,6 @@ void rtc_clk_slow_src_set(soc_rtc_slow_clk_src_t clk_src)
     } else {
         clk_ll_xtal32k_digi_disable();
     }
-
     esp_rom_delay_us(SOC_DELAY_RTC_SLOW_CLK_SWITCH);
 }
 
@@ -137,7 +159,7 @@ static void rtc_clk_bbpll_enable(void)
     clk_ll_bbpll_enable();
 }
 
-static void rtc_clk_bbpll_configure(rtc_xtal_freq_t xtal_freq, int pll_freq)
+static void rtc_clk_bbpll_configure(soc_xtal_freq_t xtal_freq, int pll_freq)
 {
     /* Digital part */
     clk_ll_bbpll_set_freq_mhz(pll_freq);
@@ -159,7 +181,7 @@ static void rtc_clk_cpu_freq_to_pll_mhz(int cpu_freq_mhz)
     clk_ll_cpu_set_divider(1);
     clk_ll_cpu_set_src(SOC_CPU_CLK_SRC_PLL);
     rtc_clk_apb_freq_update(80 * MHZ);
-    ets_update_cpu_frequency(cpu_freq_mhz);
+    esp_rom_set_cpu_ticks_per_us(cpu_freq_mhz);
 }
 
 bool rtc_clk_cpu_freq_mhz_to_config(uint32_t freq_mhz, rtc_cpu_freq_config_t *out_config)
@@ -208,8 +230,8 @@ void rtc_clk_cpu_freq_set_config(const rtc_cpu_freq_config_t *config)
     soc_cpu_clk_src_t old_cpu_clk_src = clk_ll_cpu_get_src();
     if (config->source == SOC_CPU_CLK_SRC_XTAL) {
         rtc_clk_cpu_freq_to_xtal(config->freq_mhz, config->div);
-        if ((old_cpu_clk_src == SOC_CPU_CLK_SRC_PLL) && !rtc_clk_set_bbpll_always_on()) {
-            // We don't turn off the bbpll if some consumers only depends on bbpll
+        if ((old_cpu_clk_src == SOC_CPU_CLK_SRC_PLL) && !s_bbpll_digi_consumers_ref_count) {
+            // We don't turn off the bbpll if some consumers depend on bbpll
             rtc_clk_bbpll_disable();
         }
     } else if (config->source == SOC_CPU_CLK_SRC_PLL) {
@@ -220,8 +242,8 @@ void rtc_clk_cpu_freq_set_config(const rtc_cpu_freq_config_t *config)
         rtc_clk_cpu_freq_to_pll_mhz(config->freq_mhz);
     } else if (config->source == SOC_CPU_CLK_SRC_RC_FAST) {
         rtc_clk_cpu_freq_to_8m();
-        if ((old_cpu_clk_src == SOC_CPU_CLK_SRC_PLL) && !rtc_clk_set_bbpll_always_on()) {
-            // We don't turn off the bbpll if some consumers only depends on bbpll
+        if ((old_cpu_clk_src == SOC_CPU_CLK_SRC_PLL) && !s_bbpll_digi_consumers_ref_count) {
+            // We don't turn off the bbpll if some consumers depend on bbpll
             rtc_clk_bbpll_disable();
         }
     }
@@ -285,48 +307,52 @@ void rtc_clk_cpu_freq_set_config_fast(const rtc_cpu_freq_config_t *config)
 
 void rtc_clk_cpu_freq_set_xtal(void)
 {
+    rtc_clk_cpu_set_to_default_config();
+    rtc_clk_bbpll_disable();
+}
+
+void rtc_clk_cpu_set_to_default_config(void)
+{
     int freq_mhz = (int)rtc_clk_xtal_freq_get();
 
     rtc_clk_cpu_freq_to_xtal(freq_mhz, 1);
-    // We don't turn off the bbpll if some consumers only depends on bbpll
-    if (!rtc_clk_set_bbpll_always_on()) {
-        rtc_clk_bbpll_disable();
-    }
 }
 
 /**
- * Switch to XTAL frequency. Does not disable the PLL.
+ * Switch to use XTAL as the CPU clock source.
+ * Must satisfy: cpu_freq = XTAL_FREQ / div.
+ * Does not disable the PLL.
  */
-static void rtc_clk_cpu_freq_to_xtal(int freq, int div)
+static void rtc_clk_cpu_freq_to_xtal(int cpu_freq, int div)
 {
-    ets_update_cpu_frequency(freq);
+    esp_rom_set_cpu_ticks_per_us(cpu_freq);
     /* Set divider from XTAL to APB clock. Need to set divider to 1 (reg. value 0) first. */
     clk_ll_cpu_set_divider(1);
     clk_ll_cpu_set_divider(div);
     /* switch clock source */
     clk_ll_cpu_set_src(SOC_CPU_CLK_SRC_XTAL);
-    rtc_clk_apb_freq_update(freq * MHZ);
+    rtc_clk_apb_freq_update(cpu_freq * MHZ);
 }
 
 static void rtc_clk_cpu_freq_to_8m(void)
 {
-    ets_update_cpu_frequency(20);
+    esp_rom_set_cpu_ticks_per_us(20);
     clk_ll_cpu_set_divider(1);
     clk_ll_cpu_set_src(SOC_CPU_CLK_SRC_RC_FAST);
     rtc_clk_apb_freq_update(SOC_CLK_RC_FAST_FREQ_APPROX);
 }
 
-rtc_xtal_freq_t rtc_clk_xtal_freq_get(void)
+soc_xtal_freq_t rtc_clk_xtal_freq_get(void)
 {
     uint32_t xtal_freq_mhz = clk_ll_xtal_load_freq_mhz();
     if (xtal_freq_mhz == 0) {
         ESP_HW_LOGW(TAG, "invalid RTC_XTAL_FREQ_REG value, assume 40MHz");
-        return RTC_XTAL_FREQ_40M;
+        return SOC_XTAL_FREQ_40M;
     }
-    return (rtc_xtal_freq_t)xtal_freq_mhz;
+    return (soc_xtal_freq_t)xtal_freq_mhz;
 }
 
-void rtc_clk_xtal_freq_update(rtc_xtal_freq_t xtal_freq)
+void rtc_clk_xtal_freq_update(soc_xtal_freq_t xtal_freq)
 {
     clk_ll_xtal_store_freq_mhz(xtal_freq);
 }
@@ -366,21 +392,6 @@ void rtc_dig_clk8m_disable(void)
 bool rtc_dig_8m_enabled(void)
 {
     return clk_ll_rc_fast_digi_is_enabled();
-}
-
-static bool rtc_clk_set_bbpll_always_on(void)
-{
-    /* We just keep the rtc bbpll clock on just under the case that
-    user selects the `RTC_CLOCK_BBPLL_POWER_ON_WITH_USB` as well as
-    the USB_SERIAL_JTAG is connected with PC.
-    */
-    bool is_bbpll_on = false;
-#if CONFIG_RTC_CLOCK_BBPLL_POWER_ON_WITH_USB
-    if (usb_serial_jtag_ll_txfifo_writable() == 1) {
-        is_bbpll_on = true;
-    }
-#endif
-    return is_bbpll_on;
 }
 
 /* Name used in libphy.a:phy_chip_v7.o

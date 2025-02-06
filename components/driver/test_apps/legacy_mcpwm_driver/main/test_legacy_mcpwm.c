@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2021-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2021-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -12,18 +12,38 @@
 #include "hal/gpio_hal.h"
 #include "esp_rom_gpio.h"
 #include "esp_private/esp_clk.h"
+#include "esp_private/gpio.h"
 #include "soc/mcpwm_periph.h"
+#include "soc/io_mux_reg.h"
 #include "driver/pulse_cnt.h"
 #include "driver/mcpwm.h"
 #include "driver/gpio.h"
 
+#if CONFIG_IDF_TARGET_ESP32
 #define TEST_PWMA_GPIO (2)
 #define TEST_PWMB_GPIO (4)
+#define TEST_CAP_GPIO (21)
 #define TEST_FAULT_GPIO (21)
 #define TEST_SYNC_GPIO_0 (21)
 #define TEST_SYNC_GPIO_1 (18)
 #define TEST_SYNC_GPIO_2 (19)
-#define TEST_CAP_GPIO (21)
+#elif CONFIG_IDF_TARGET_ESP32P4
+#define TEST_PWMA_GPIO (20)
+#define TEST_PWMB_GPIO (21)
+#define TEST_CAP_GPIO  (22)
+#define TEST_FAULT_GPIO  (22)
+#define TEST_SYNC_GPIO_0 (22)
+#define TEST_SYNC_GPIO_1 (32)
+#define TEST_SYNC_GPIO_2 (33)
+#else
+#define TEST_PWMA_GPIO (1)
+#define TEST_PWMB_GPIO (2)
+#define TEST_CAP_GPIO  (3)
+#define TEST_FAULT_GPIO  (3)
+#define TEST_SYNC_GPIO_0 (3)
+#define TEST_SYNC_GPIO_1 (4)
+#define TEST_SYNC_GPIO_2 (5)
+#endif  //CONFIG_IDF_TARGET_ESP32
 
 // MCPWM default resolution
 #if CONFIG_IDF_TARGET_ESP32H2
@@ -31,6 +51,7 @@
 #else
 #define MCPWM_TEST_GROUP_CLK_HZ (10 * 1000 * 1000)
 #endif
+
 #define MCPWM_TEST_TIMER_CLK_HZ (1 * 1000 * 1000)
 
 const static mcpwm_io_signals_t pwma[] = {MCPWM0A, MCPWM1A, MCPWM2A};
@@ -42,10 +63,12 @@ const static mcpwm_io_signals_t sync_io_sig_array[] = {MCPWM_SYNC_0, MCPWM_SYNC_
 const static mcpwm_capture_signal_t cap_sig_array[] = {MCPWM_SELECT_CAP0, MCPWM_SELECT_CAP1, MCPWM_SELECT_CAP2};
 const static mcpwm_io_signals_t cap_io_sig_array[] = {MCPWM_CAP_0, MCPWM_CAP_1, MCPWM_CAP_2};
 
+#if SOC_PCNT_SUPPORTED
 static pcnt_unit_handle_t pcnt_unit_a;
 static pcnt_channel_handle_t pcnt_chan_a;
 static pcnt_unit_handle_t pcnt_unit_b;
 static pcnt_channel_handle_t pcnt_chan_b;
+#endif
 
 // This GPIO init function is almost the same to public API `mcpwm_gpio_init()`, except that
 // this function will configure all MCPWM GPIOs into output and input capable
@@ -74,7 +97,7 @@ static esp_err_t test_mcpwm_gpio_init(mcpwm_unit_t mcpwm_num, mcpwm_io_signals_t
         int capture_id = io_signal - MCPWM_CAP_0;
         esp_rom_gpio_connect_in_signal(gpio_num, mcpwm_periph_signals.groups[mcpwm_num].captures[capture_id].cap_sig, 0);
     }
-    gpio_hal_iomux_func_sel(GPIO_PIN_MUX_REG[gpio_num], PIN_FUNC_GPIO);
+    gpio_func_sel(gpio_num, PIN_FUNC_GPIO);
     return ESP_OK;
 }
 
@@ -100,6 +123,7 @@ static void mcpwm_setup_testbench(mcpwm_unit_t group, mcpwm_timer_t timer, uint3
     TEST_ESP_OK(mcpwm_init(group, timer, &pwm_config));
 }
 
+#if SOC_PCNT_SUPPORTED
 static void pcnt_setup_testbench(void)
 {
     // PWMA <--> PCNT UNIT0
@@ -154,6 +178,7 @@ static uint32_t pcnt_get_pulse_number(pcnt_unit_handle_t pwm_pcnt_unit, int capt
     printf("count value: %d\r\n", count_value);
     return (uint32_t)count_value;
 }
+#endif // SOC_PCNT_SUPPORTED
 
 static void mcpwm_timer_duty_test(mcpwm_unit_t unit, mcpwm_timer_t timer, unsigned long int group_resolution, unsigned long int timer_resolution)
 {
@@ -191,6 +216,7 @@ TEST_CASE("MCPWM duty test", "[mcpwm]")
 
 // -------------------------------------------------------------------------------------
 
+#if SOC_PCNT_SUPPORTED
 static void mcpwm_start_stop_test(mcpwm_unit_t unit, mcpwm_timer_t timer)
 {
     uint32_t pulse_number = 0;
@@ -225,6 +251,7 @@ TEST_CASE("MCPWM start and stop test", "[mcpwm]")
         }
     }
 }
+#endif // SOC_PCNT_SUPPORTED
 
 // -------------------------------------------------------------------------------------
 
@@ -257,7 +284,8 @@ TEST_CASE("MCPWM deadtime test", "[mcpwm]")
 }
 
 // -------------------------------------------------------------------------------------
-
+#if SOC_PCNT_SUPPORTED
+#define TEST_CARRIER_FREQ    250000
 static void mcpwm_carrier_test(mcpwm_unit_t unit, mcpwm_timer_t timer, mcpwm_carrier_out_ivt_t invert_or_not,
                                uint8_t period, uint8_t duty, uint8_t os_width)
 {
@@ -275,10 +303,10 @@ static void mcpwm_carrier_test(mcpwm_unit_t unit, mcpwm_timer_t timer, mcpwm_car
     vTaskDelay(pdMS_TO_TICKS(100));
 
     pulse_number = pcnt_get_pulse_number(pcnt_unit_a, 10);
-    TEST_ASSERT_INT_WITHIN(50, 2500, pulse_number);
+    TEST_ASSERT_INT_WITHIN(50, (TEST_CARRIER_FREQ / 100), pulse_number);
     usleep(10000);
     pulse_number = pcnt_get_pulse_number(pcnt_unit_b, 10);
-    TEST_ASSERT_INT_WITHIN(50, 2500, pulse_number);
+    TEST_ASSERT_INT_WITHIN(50, (TEST_CARRIER_FREQ / 100), pulse_number);
 
     TEST_ESP_OK(mcpwm_carrier_disable(unit, timer));
     TEST_ESP_OK(mcpwm_stop(unit, timer));
@@ -290,11 +318,13 @@ TEST_CASE("MCPWM carrier test", "[mcpwm]")
     for (int i = 0; i < SOC_MCPWM_GROUPS; i++) {
         for (int j = 0; j < SOC_MCPWM_TIMERS_PER_GROUP; j++) {
             // carrier should be 10MHz/8/(4+1) = 250KHz, (10MHz is the group resolution, it's fixed in the driver), carrier duty cycle is 4/8 = 50%
-            mcpwm_carrier_test(i, j, MCPWM_CARRIER_OUT_IVT_DIS, 4, 4, 3);
-            mcpwm_carrier_test(i, j, MCPWM_CARRIER_OUT_IVT_EN, 4, 4, 3);
+            // (MCPWM_TEST_GROUP_CLK_HZ/8/TEST_CARRIER_FREQ - 1) should be a integer
+            mcpwm_carrier_test(i, j, MCPWM_CARRIER_OUT_IVT_DIS, (MCPWM_TEST_GROUP_CLK_HZ / 8 / TEST_CARRIER_FREQ - 1), 4, 3);
+            mcpwm_carrier_test(i, j, MCPWM_CARRIER_OUT_IVT_EN, (MCPWM_TEST_GROUP_CLK_HZ / 8 / TEST_CARRIER_FREQ - 1), 4, 3);
         }
     }
 }
+#endif // SOC_PCNT_SUPPORTED
 
 // -------------------------------------------------------------------------------------
 

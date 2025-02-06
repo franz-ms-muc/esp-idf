@@ -495,11 +495,11 @@ void bta_gatts_add_char_descr(tBTA_GATTS_SRVC_CB *p_srvc_cb, tBTA_GATTS_DATA *p_
 
 /*******************************************************************************
 **
-** Function         bta_gatts_add_char_descr
+** Function         bta_gatts_set_attr_value
 **
-** Description      action function to add characteristic descriptor.
+** Description      This function is used to set the attribute value.
 **
-** Returns          none.
+** Returns          None.
 **
 *******************************************************************************/
 void bta_gatts_set_attr_value(tBTA_GATTS_SRVC_CB *p_srvc_cb, tBTA_GATTS_DATA *p_msg)
@@ -526,8 +526,23 @@ void bta_gatts_set_attr_value(tBTA_GATTS_SRVC_CB *p_srvc_cb, tBTA_GATTS_DATA *p_
     }
 }
 
+/*******************************************************************************
+**
+** Function         bta_gatts_get_attr_value
+**
+** Description      This function retrieves the attribute value associated with
+**                  the given attribute handle.
+**
+** Returns          tGATT_STATUS - GATT status indicating success or failure in
+**                  retrieving the attribute value.
+**
+*******************************************************************************/
+
 tGATT_STATUS bta_gatts_get_attr_value(UINT16 attr_handle, UINT16 *length, UINT8 **value)
 {
+    if (GATTS_GetAttributeValueInternal(attr_handle, length, value) == 0) {
+        return 0;
+    }
 
    return GATTS_GetAttributeValue(attr_handle, length, value);
 }
@@ -699,7 +714,7 @@ void bta_gatts_indicate_handle (tBTA_GATTS_CB *p_cb, tBTA_GATTS_DATA *p_msg)
             cb_data.req_data.data_len = 0;
             cb_data.req_data.handle = p_msg->api_indicate.attr_id;
 
-            if (p_msg->api_indicate.value && (p_msg->api_indicate.len > 0)) {
+            if (p_msg->api_indicate.len > 0) {
                 cb_data.req_data.value = (uint8_t *) osi_malloc(p_msg->api_indicate.len);
                 if (cb_data.req_data.value != NULL) {
                     memset(cb_data.req_data.value, 0, p_msg->api_indicate.len);
@@ -709,9 +724,7 @@ void bta_gatts_indicate_handle (tBTA_GATTS_CB *p_cb, tBTA_GATTS_DATA *p_msg)
                     APPL_TRACE_ERROR("%s, malloc failed", __func__);
                 }
             } else {
-                if (p_msg->api_indicate.value) {
-                    APPL_TRACE_ERROR("%s, incorrect length", __func__);
-                }
+                APPL_TRACE_ERROR("%s, incorrect length", __func__);
             }
             (*p_rcb->p_cback)(BTA_GATTS_CONF_EVT, &cb_data);
             if (cb_data.req_data.value != NULL) {
@@ -903,6 +916,22 @@ void bta_gatts_listen(tBTA_GATTS_CB *p_cb, tBTA_GATTS_DATA *p_msg)
 
     if (p_rcb->p_cback) {
         (*p_rcb->p_cback)(BTA_GATTS_LISTEN_EVT, &cb_data);
+    }
+}
+
+/*******************************************************************************
+**
+** Function         bta_gatts_show_local_database
+**
+** Description      print loacl service database
+**
+** Returns          none.
+**
+*******************************************************************************/
+void bta_gatts_show_local_database (void)
+{
+    if (GATTS_ShowLocalDatabase()) {
+        APPL_TRACE_ERROR("%s failed", __func__);
     }
 }
 

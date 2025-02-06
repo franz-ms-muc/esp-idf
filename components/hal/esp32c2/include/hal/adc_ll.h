@@ -1,5 +1,5 @@
 /*
- * SPDX-FileCopyrightText: 2015-2022 Espressif Systems (Shanghai) CO LTD
+ * SPDX-FileCopyrightText: 2015-2024 Espressif Systems (Shanghai) CO LTD
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -15,6 +15,7 @@
 #include "soc/rtc_cntl_struct.h"
 #include "soc/rtc_cntl_reg.h"
 #include "soc/clk_tree_defs.h"
+#include "soc/system_struct.h"
 #include "hal/misc.h"
 #include "hal/assert.h"
 #include "hal/adc_types.h"
@@ -26,26 +27,39 @@
 extern "C" {
 #endif
 
+#define ADC_LL_EVENT_ADC1_ONESHOT_DONE    BIT(31)
+#define ADC_LL_EVENT_ADC2_ONESHOT_DONE    BIT(30)
+
+/*---------------------------------------------------------------
+                    Oneshot
+---------------------------------------------------------------*/
+#define ADC_LL_DATA_INVERT_DEFAULT(PERIPH_NUM)         (0)
+#define ADC_LL_DELAY_CYCLE_AFTER_DONE_SIGNAL           (0)
+
+/*---------------------------------------------------------------
+                    DMA
+---------------------------------------------------------------*/
+#define ADC_LL_DIGI_DATA_INVERT_DEFAULT(PERIPH_NUM)    (0)
+#define ADC_LL_FSM_RSTB_WAIT_DEFAULT                   (8)
+#define ADC_LL_FSM_START_WAIT_DEFAULT                  (5)
+#define ADC_LL_FSM_STANDBY_WAIT_DEFAULT                (100)
+#define ADC_LL_SAMPLE_CYCLE_DEFAULT                    (2)
+#define ADC_LL_DIGI_SAR_CLK_DIV_DEFAULT                (1)
+
 #define ADC_LL_CLKM_DIV_NUM_DEFAULT       15
 #define ADC_LL_CLKM_DIV_B_DEFAULT         1
 #define ADC_LL_CLKM_DIV_A_DEFAULT         0
 
-#define ADC_LL_EVENT_ADC1_ONESHOT_DONE    BIT(31)
-#define ADC_LL_EVENT_ADC2_ONESHOT_DONE    BIT(30)
+/*---------------------------------------------------------------
+                    PWDET (Power Detect)
+---------------------------------------------------------------*/
+#define ADC_LL_PWDET_CCT_DEFAULT                       (4)
 
 typedef enum {
-    ADC_POWER_BY_FSM,   /*!< ADC XPD controlled by FSM. Used for polling mode */
-    ADC_POWER_SW_ON,    /*!< ADC XPD controlled by SW. power on. Used for DMA mode */
-    ADC_POWER_SW_OFF,   /*!< ADC XPD controlled by SW. power off. */
-    ADC_POWER_MAX,      /*!< For parameter check. */
+    ADC_LL_POWER_BY_FSM,   /*!< ADC XPD controlled by FSM. Used for polling mode */
+    ADC_LL_POWER_SW_ON,    /*!< ADC XPD controlled by SW. power on. Used for DMA mode */
+    ADC_LL_POWER_SW_OFF,   /*!< ADC XPD controlled by SW. power off. */
 } adc_ll_power_t;
-
-typedef enum {
-    ADC_RTC_DATA_OK = 0,
-    ADC_RTC_CTRL_UNSELECTED = 1,
-    ADC_RTC_CTRL_BREAK = 2,
-    ADC_RTC_DATA_FAIL = -1,
-} adc_ll_rtc_raw_data_t;
 
 typedef enum {
     ADC_LL_CTRL_DIG = 0,    ///< For ADC1. Select DIG controller.
@@ -235,42 +249,6 @@ static inline void adc_ll_digi_filter_enable(adc_digi_iir_filter_t idx, adc_unit
 }
 
 /**
- * Set monitor mode of adc digital controller.
- *
- * @note If the channel info is not supported, the monitor function will not be enabled.
- * @param adc_n ADC unit.
- * @param is_larger true:  If ADC_OUT >  threshold, Generates monitor interrupt.
- *                  false: If ADC_OUT <  threshold, Generates monitor interrupt.
- */
-static inline void adc_ll_digi_monitor_set_mode(adc_digi_monitor_idx_t idx, adc_digi_monitor_t *cfg)
-{
-    if (idx == ADC_DIGI_MONITOR_IDX0) {
-        APB_SARADC.saradc_thres0_ctrl.saradc_thres0_channel = (cfg->adc_unit << 3) | (cfg->channel & 0x7);
-        APB_SARADC.saradc_thres0_ctrl.saradc_thres0_high = cfg->h_threshold;
-        APB_SARADC.saradc_thres0_ctrl.saradc_thres0_low = cfg->l_threshold;
-    } else { // ADC_DIGI_MONITOR_IDX1
-        APB_SARADC.saradc_thres1_ctrl.saradc_thres1_channel = (cfg->adc_unit << 3) | (cfg->channel & 0x7);
-        APB_SARADC.saradc_thres1_ctrl.saradc_thres1_high = cfg->h_threshold;
-        APB_SARADC.saradc_thres1_ctrl.saradc_thres1_low = cfg->l_threshold;
-    }
-}
-
-/**
- * Enable/disable monitor of adc digital controller.
- *
- * @note If the channel info is not supported, the monitor function will not be enabled.
- * @param adc_n ADC unit.
- */
-static inline void adc_ll_digi_monitor_disable(adc_digi_monitor_idx_t idx)
-{
-    if (idx == ADC_DIGI_MONITOR_IDX0) {
-        APB_SARADC.saradc_thres0_ctrl.saradc_thres0_channel = 0xF;
-    } else { // ADC_DIGI_MONITOR_IDX1
-        APB_SARADC.saradc_thres1_ctrl.saradc_thres1_channel = 0xF;
-    }
-}
-
-/**
  * Reset adc digital controller.
  */
 static inline void adc_ll_digi_reset(void)
@@ -309,22 +287,46 @@ static inline uint32_t adc_ll_pwdet_get_cct(void)
 /*---------------------------------------------------------------
                     Common setting
 ---------------------------------------------------------------*/
+
+/**
+ * @brief Enable the ADC clock
+ * @param enable true to enable, false to disable
+ */
+static inline void adc_ll_enable_bus_clock(bool enable)
+{
+    SYSTEM.perip_clk_en0.apb_saradc_clk_en = enable;
+}
+// SYSTEM.perip_clk_en0 is a shared register, so this function must be used in an atomic way
+#define adc_ll_enable_bus_clock(...) (void)__DECLARE_RCC_ATOMIC_ENV; adc_ll_enable_bus_clock(__VA_ARGS__)
+
+/**
+ * @brief Reset ADC module
+ */
+static inline void adc_ll_reset_register(void)
+{
+    SYSTEM.perip_rst_en0.apb_saradc_rst = 1;
+    SYSTEM.perip_rst_en0.apb_saradc_rst = 0;
+}
+//  SYSTEM.perip_rst_en0 is a shared register, so this function must be used in an atomic way
+#define adc_ll_reset_register(...) (void)__DECLARE_RCC_ATOMIC_ENV; adc_ll_reset_register(__VA_ARGS__)
+
 /**
  * Set ADC module power management.
  *
  * @param manage Set ADC power status.
  */
+__attribute__((always_inline))
 static inline void adc_ll_digi_set_power_manage(adc_ll_power_t manage)
 {
     /* Bit1  0:Fsm  1: SW mode
        Bit0  0:SW mode power down  1: SW mode power on */
-    if (manage == ADC_POWER_SW_ON) {
+    if (manage == ADC_LL_POWER_SW_ON) {
         APB_SARADC.saradc_ctrl.saradc_saradc_sar_clk_gated = 1;
         APB_SARADC.saradc_ctrl.saradc_saradc_xpd_sar_force = 3;
-    } else if (manage == ADC_POWER_BY_FSM) {
+    } else if (manage == ADC_LL_POWER_BY_FSM) {
         APB_SARADC.saradc_ctrl.saradc_saradc_sar_clk_gated = 1;
         APB_SARADC.saradc_ctrl.saradc_saradc_xpd_sar_force = 0;
-    } else if (manage == ADC_POWER_SW_OFF) {
+    } else if (manage == ADC_LL_POWER_SW_OFF) {
         APB_SARADC.saradc_ctrl.saradc_saradc_sar_clk_gated = 0;
         APB_SARADC.saradc_ctrl.saradc_saradc_xpd_sar_force = 2;
     }
@@ -567,7 +569,7 @@ static inline adc_atten_t adc_ll_get_atten(adc_unit_t adc_n, adc_channel_t chann
 {
     (void)adc_n;
     (void)channel;
-    return APB_SARADC.saradc_onetime_sample.saradc_saradc_onetime_atten;
+    return (adc_atten_t)(APB_SARADC.saradc_onetime_sample.saradc_saradc_onetime_atten);
 }
 
 #ifdef __cplusplus
