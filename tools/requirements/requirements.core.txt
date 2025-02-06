@@ -28,3 +28,4 @@ psutil
 
 # gdb extensions dependencies
 freertos_gdb
+requests>=2.32.0 # not directly required, pinned by Snyk to avoid a vulnerability
